@@ -23,13 +23,13 @@ type Config struct {
 }
 
 func (c *Config) TimeFormat() string {
-    return filepath.Join(c.YearFromat, c.MonthFromat, c.DayFormat)
+	return filepath.Join(c.YearFromat, c.MonthFromat, c.DayFormat)
 }
 
 func (c *Config) FileFormat() string {
 	return fmt.Sprintf(
 		"%v.%v",
-        c.TimeFormat(),
+		c.TimeFormat(),
 		c.FileExtension,
 	)
 }

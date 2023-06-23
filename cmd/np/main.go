@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-    "path/filepath"
+	"path/filepath"
 
 	"github.com/Lambels/newspaper"
 	"github.com/Lambels/newspaper/commands"
@@ -26,11 +26,11 @@ func main() {
 
 	root := commands.NewRoot(fs)
 	todayCmd := commands.NewToday(flagReg)
-    findCmd := commands.NewFind(flagReg)
+	findCmd := commands.NewFind(flagReg)
 
 	root.Subcommands = []*ffcli.Command{
 		todayCmd,
-        findCmd,
+		findCmd,
 	}
 
 	if err := root.ParseAndRun(context.Background(), next); err != nil {
@@ -45,7 +45,7 @@ func parseConfig(fs *flag.FlagSet, args []string) (*commands.FlagRegister, []str
 	if err != nil {
 		return nil, nil, err
 	}
-    path := filepath.Join(homeDir, newspaper.DefaultConfigPath)
+	path := filepath.Join(homeDir, newspaper.DefaultConfigPath)
 	cfgPath := fs.String("config", path, "set the path to the config file")
 
 	if err := fs.Parse(args); err != nil {

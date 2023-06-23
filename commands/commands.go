@@ -36,17 +36,17 @@ type TimeContext struct {
 func (c *FlagRegister) RegisterTime(fs *flag.FlagSet) TimeContext {
 	var ctx TimeContext
 
-    moment := timeline.NewMoment(c.Config.FileFormat(), c.Config.Root, time.Now())
-    fs.Func("r", "set the root of the action", func(s string) error {
-        time, err := time.Parse(c.Config.TimeFormat(), s)
-        if err != nil {
-            return err
-        }
-        moment.Instant = time
-        return nil
-    })
+	moment := timeline.NewMoment(c.Config.FileFormat(), c.Config.Root, time.Now())
+	fs.Func("r", "set the root of the action", func(s string) error {
+		time, err := time.Parse(c.Config.TimeFormat(), s)
+		if err != nil {
+			return err
+		}
+		moment.Instant = time
+		return nil
+	})
 	ctx.Offset = fs.Int("o", 0, "set action offset")
-    ctx.Root = &moment
+	ctx.Root = &moment
 
 	return ctx
 }
@@ -58,14 +58,14 @@ func logVerbosef(verbose bool, format string, v ...any) {
 }
 
 func createOnForce(force bool, moment *timeline.Moment) (*os.File, bool, error) {
-    if !force {
-        return nil, false, nil
-    }
-    
-    if exists, err := moment.Exists(); err == nil && !exists {
-        f, err := moment.OpenOrCreate()
-        return f, exists, err
-    } else {
-        return nil, false, err
-    }
+	if !force {
+		return nil, false, nil
+	}
+
+	if exists, err := moment.Exists(); err == nil && !exists {
+		f, err := moment.OpenOrCreate()
+		return f, exists, err
+	} else {
+		return nil, false, err
+	}
 }

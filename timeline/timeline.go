@@ -21,12 +21,12 @@ type Moment struct {
 
 func NewMoment(format string, root string, instant time.Time) Moment {
 	return Moment{
-		Instant:   instant,
-		format:    format,
-		root:      root,
-		relative:  0,
-		dirExists: false,
-        fileExists: false,
+		Instant:    instant,
+		format:     format,
+		root:       root,
+		relative:   0,
+		dirExists:  false,
+		fileExists: false,
 	}
 }
 
@@ -83,6 +83,7 @@ func (m Moment) Next(n int) Moment {
 	return moment
 }
 
+// TODO: might need to pass pointer + figure out dirExists optimisation.
 func (m Moment) NextFunc(n int, f func(Moment) error) error {
 	for i := 0; i < n; i++ {
 		if err := f(m.Next(i)); err != nil {
