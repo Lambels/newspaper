@@ -2,47 +2,49 @@ package newspaper
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 )
 
-const defaultConfigPath string = ""
-
-var defaultConfig Config = Config{
-    root:           "",
-    fileExtension:  "md",
-    remindersFirst: true,
-    yearFromat:     "YYYY",
-    monthFromat:    "MM",
-    dayFormat:      "DD",
-}
+const DefaultConfigPath string = "/.config/newspaper.json"
 
 type Config struct {
-	root          string
-	fileExtension string
+	Root          string `json:"root"`
+	FileExtension string `json:"file_extension"`
 
-	remindersFirst bool
+	RemindersFirst bool `json:"reminders_first"`
 
-	yearFromat  string
-	monthFromat string
-	dayFormat   string
+	YearFromat  string `json:"year_format"`
+	MonthFromat string `json:"month_format"`
+	DayFormat   string `json:"day_format"`
 
-    storageFilePath string
+	StorageFilePath string `json:"storage_file_path"`
+}
+
+func (c *Config) TimeFormat() string {
+    return filepath.Join(c.YearFromat, c.MonthFromat, c.DayFormat)
+}
+
+func (c *Config) FileFormat() string {
+	return fmt.Sprintf(
+		"%v.%v",
+        c.TimeFormat(),
+		c.FileExtension,
+	)
 }
 
 func LoadConfig(path string) (*Config, error) {
-    if path == "" {
-        path = defaultConfigPath
-    }
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
 
-    file, err := os.Open(path)
-    if err != nil {
-        return &defaultConfig, err
-    }
+	cfg := new(Config)
+	if err := json.NewDecoder(file).Decode(cfg); err != nil {
+		return nil, err
+	}
+	cfg.Root = filepath.Clean(cfg.Root)
 
-    cfg := new(Config)
-    if err := json.NewDecoder(file).Decode(cfg); err != nil {
-        return &defaultConfig, err
-    }
-
-    return cfg, nil
+	return cfg, nil
 }
