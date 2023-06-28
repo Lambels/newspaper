@@ -3,9 +3,9 @@ package interpreter
 import (
 	"bytes"
 	"io"
-	"log"
-	"strconv"
 )
+
+const whitespace string = " \t\v"
 
 var token_funcs = []struct {
 	prefix []byte
@@ -21,6 +21,7 @@ var token_funcs = []struct {
 }
 
 func NewLexer(buf []byte) *Lexer {
+	//TODO: maybe need to trim start here.
 	return &Lexer{
 		start: 0,
 		end:   0,
@@ -39,9 +40,14 @@ type Token struct {
 }
 
 type Lexer struct {
+	// start represents the current start of the token in the file buf.
 	start int
-	end   int
-	line  int
+	// end represents the current end of the token in token buf.
+	end int
+	// line represents the current line.
+	line int
+	// token holds the bytes of an actual token, marker and script.
+	token []byte
 
 	err error
 	buf []byte
@@ -67,44 +73,63 @@ type Lexer struct {
 // ~This is a script~
 // ~THis is not a script~ because it is contained in text ~this is a script~
 func (l *Lexer) Next() (*Token, error) {
+    //TODO: check for newline character and increment line, only once.
+    if l.peek() == '\n' {
+        l.line++
+        l.start++
+    }
+
 	if l.err != nil {
 		return &Token{}, l.err
 	}
 
 	gen := (*Lexer).text
-	var delims [][]byte
-	for _, t := range token_funcs {
-		if bytes.HasPrefix(l.buf[l.end:], t.prefix) {
-			gen = t.gen
-			delims = t.delims
+	switch len(l.token) {
+	case 0: // we need to get a token.
+		var delims [][]byte
+		for _, t := range token_funcs {
+			if hasPrefixWithSpace(l.buf[l.start:], t.prefix) {
+				gen = t.gen
+				delims = t.delims
+			}
 		}
+
+		index := indexFirst(l.buf[l.start:], delims...)
+        l.setToken(l.buf[l.start:index])
+
+        // now that we have a token set, we need to move the end offset before the script.
+        l.end = len(l.token)
+        if l.token[l.end-1] == '~' {
+            if v := bytes.LastIndexByte(l.token[:l.end-1], '~'); v != -1 {
+                l.end = v
+            }
+        }
+
+	default: // fastpath: if there is already a token set, it must be a script, truncate whitespace and generate it.
+		gen = (*Lexer).script
+        l.setToken(bytes.TrimLeft(l.token, whitespace))
 	}
 
-	token := &Token{
-		Marker: -1,
+    elem := gen(l)
+    if elem == nil {
+        return nil, nil
+    }
+
+    return nil, nil
+}
+
+func (l *Lexer) setToken(token []byte) {
+	if len(token) == 0 {
+		l.start += l.end
+		l.token = nil
+		return
 	}
 
-	// move the end pointer to the first delimeter.
-	l.moveBefore(delims...)
-	switch {
-	case l.peek() == '~' && l.buf[l.start] == '~': // fastpath: we are parsing a script, no need to backtrack.
-	default: // we need to backtrack the script, it will be parsed on the next call to next.
-		l.backtrackScript()
-		token.Marker = l.parseMarker()
+	if l.token != nil {
+		l.start += len(l.token) - len(token)
 	}
 
-	if l.peek() == '\n' {
-		l.line++
-	}
-
-	// the end pointer is now in position, generate the element.
-	elem := gen(l)
-	token.startx = l.start
-	token.endx = l.end
-	token.line = l.line
-	token.Element = elem
-
-	return token, nil
+	l.token = token
 }
 
 func (l *Lexer) script() Element {
@@ -112,9 +137,15 @@ func (l *Lexer) script() Element {
 }
 
 func (l *Lexer) text() Element {
-	return &Text{
-		buf: bytes.NewBuffer(l.buf[l.start:l.end]),
-	}
+    clean := bytes.TrimLeft(l.token, whitespace)
+    l.setToken(clean)
+    if len(clean) == 0 {
+        return nil
+    }
+
+    return &Text{
+        buf: bytes.NewBuffer(bytes.TrimSpace(l.token[:l.end])), 
+    }
 }
 
 func (l *Lexer) list() Element {
@@ -137,50 +168,24 @@ func (l *Lexer) cchain() Element {
 	return nil
 }
 
-func (l *Lexer) parseMarker() int {
-	// fastpath: no closing braket, no marker
-	if l.peek() != ')' {
-		return -1
-	}
-
-	index := bytes.LastIndexByte(l.buf[l.start:l.end], '(')
+func indexFirst(buf []byte, delims ...[]byte) int {
+	index := bytes.IndexByte(buf, '\n')
 	if index == -1 {
-		return -1
-	}
-
-	marker, err := strconv.Atoi(string(l.buf[index:l.end]))
-	if err != nil {
-		return -1
-	}
-	return marker
-}
-
-func (l *Lexer) moveBefore(delims ...[]byte) {
-	index := bytes.IndexByte(l.buf[l.start:], '\n')
-	if index == -1 {
-		index = len(l.buf[l.start:])
+		index = len(buf)
 	}
 
 	for _, delim := range delims {
-		if v := bytes.Index(l.buf[l.start:index], delim); v != -1 && v < index {
-			index = v
+		var offset int
+		if hasPrefixWithSpace(buf, delim) {
+			offset = bytes.Index(buf, delim)
+		}
+
+		if v := bytes.Index(buf[offset:index], delim); v != -1 && v+offset < index {
+			index = v + offset
 		}
 	}
 
-	l.end = index + l.start
-}
-
-func (l *Lexer) backtrackScript() {
-	// fastpath1: no script tag imediately before end.
-	if l.peek() != '~' {
-		return
-	}
-
-	// push the end pointer back to the first script tag from left to right.
-	index := bytes.LastIndexByte(l.buf[l.start:l.end], '~')
-	if index != -1 {
-		l.end = index
-	}
+	return index
 }
 
 func (l *Lexer) peek() byte {
@@ -188,15 +193,33 @@ func (l *Lexer) peek() byte {
 		return '\x00'
 	}
 
-    log.Println(l.end)
 	return l.buf[l.end]
 }
 
 func (l *Lexer) atEnd() bool {
-    if l.end >= len(l.buf) {
+	if l.end >= len(l.buf) {
 		l.err = io.EOF
 		return true
 	}
 
 	return false
+}
+
+var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
+
+func leadingTab(s []byte) int {
+	var count int
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '\t' {
+			return count
+		}
+		count++
+	}
+
+	return count
+}
+
+func hasPrefixWithSpace(s []byte, prefix []byte) bool {
+	return bytes.HasPrefix(bytes.TrimLeft(s, " \t\v"), prefix)
 }
