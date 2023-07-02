@@ -3,30 +3,28 @@ package interpreter
 import (
 	"bytes"
 	"io"
+	"strconv"
+	"unicode"
 )
 
 const whitespace string = " \t\v"
 
 var token_funcs = []struct {
 	prefix []byte
-	delims [][]byte
 	gen    func(*Lexer) Element
 }{
-	{[]byte("- []"), nil, (*Lexer).todo},
-	{[]byte("- [x]"), nil, (*Lexer).ctodo},
-	{[]byte("- "), nil, (*Lexer).list},
-	{[]byte("->[]"), [][]byte{[]byte("->[]"), []byte("->[x]")}, (*Lexer).chain},
-	{[]byte("->[x]"), [][]byte{[]byte("->[]"), []byte("->[x]")}, (*Lexer).cchain},
-	{[]byte("~"), nil, (*Lexer).text},
+	{[]byte("- []"), (*Lexer).todo},
+	{[]byte("- [x]"), (*Lexer).ctodo},
+	{[]byte("- "), (*Lexer).list},
+	{[]byte("->[]"), (*Lexer).chain},
+	{[]byte("->[x]"), (*Lexer).cchain},
 }
 
 func NewLexer(buf []byte) *Lexer {
-	//TODO: maybe need to trim start here.
 	return &Lexer{
 		start: 0,
 		end:   0,
 		line:  0,
-		err:   nil,
 		buf:   buf,
 	}
 }
@@ -34,9 +32,9 @@ func NewLexer(buf []byte) *Lexer {
 type Token struct {
 	Marker  int
 	Element Element
-	line    int
-	startx  int
-	endx    int
+	Line    int
+	Start   int
+	End     int
 }
 
 type Lexer struct {
@@ -45,12 +43,13 @@ type Lexer struct {
 	// end represents the current end of the token in token buf.
 	end int
 	// line represents the current line.
-	line int
-	// token holds the bytes of an actual token, marker and script.
-	token []byte
+	line   int
+	indent int
 
-	err error
-	buf []byte
+	tkn *Token
+
+	reporter *ErrorReporter
+	buf      []byte
 }
 
 // Possible Tokens:
@@ -72,64 +71,121 @@ type Lexer struct {
 // Script:
 // ~This is a script~
 // ~THis is not a script~ because it is contained in text ~this is a script~
-func (l *Lexer) Next() (*Token, error) {
-    //TODO: check for newline character and increment line, only once.
-    if l.peek() == '\n' {
-        l.line++
-        l.start++
-    }
-
-	if l.err != nil {
-		return &Token{}, l.err
+func (l *Lexer) Advance() bool {
+	if l.atEnd() {
+		return false
 	}
 
-	gen := (*Lexer).text
-	switch len(l.token) {
-	case 0: // we need to get a token.
-		var delims [][]byte
-		for _, t := range token_funcs {
-			if hasPrefixWithSpace(l.buf[l.start:], t.prefix) {
-				gen = t.gen
-				delims = t.delims
+	var lexeme Element
+	marker := -1
+	c := l.advance()
+
+	switch {
+	case c == '~': // script tag, emit script lexeme.
+		lexeme = l.script()
+	case c == '\n': // new line, reset indent counter and increment line.
+		l.indent = 0
+		l.line++
+		// for each consecutive match of a tab increase the indent and consume it.
+		for l.match('\t') {
+			l.indent++
+		}
+	case unicode.IsSpace(rune(c)): // skip out of order space.
+	default: // we need to generate a more complex lexeme.
+		gen := (*Lexer).text
+		for _, v := range token_funcs {
+			if bytes.HasPrefix(l.buf[l.start:], v.prefix) {
+				gen = v.gen
 			}
 		}
-
-		index := indexFirst(l.buf[l.start:], delims...)
-        l.setToken(l.buf[l.start:index])
-
-        // now that we have a token set, we need to move the end offset before the script.
-        l.end = len(l.token)
-        if l.token[l.end-1] == '~' {
-            if v := bytes.LastIndexByte(l.token[:l.end-1], '~'); v != -1 {
-                l.end = v
-            }
-        }
-
-	default: // fastpath: if there is already a token set, it must be a script, truncate whitespace and generate it.
-		gen = (*Lexer).script
-        l.setToken(bytes.TrimLeft(l.token, whitespace))
+		lexeme = gen(l)
+		marker = l.parseMarker()
 	}
 
-    elem := gen(l)
-    if elem == nil {
-        return nil, nil
-    }
+	// if parsing the current lexeme had an error, report an illegal advance.
+	if l.reporter.HadError() {
+		return false
+	}
 
-    return nil, nil
+	l.tkn = &Token{
+		Marker:  marker,
+		Element: lexeme,
+		Line:    l.line,
+		Start:   l.start,
+		End:     l.end,
+	}
+
+	return true
 }
 
-func (l *Lexer) setToken(token []byte) {
-	if len(token) == 0 {
-		l.start += l.end
-		l.token = nil
-		return
+func (l *Lexer) Token() *Token {
+    return l.tkn
+}
+
+func indexBeforeClosing(delims ...[]byte) int {
+
+}
+
+func (l *Lexer) parseMarker() int {
+	// try to parse marker.
+	var end int
+	for i := l.end; i > l.start; i-- {
+		if !unicode.IsSpace(rune(l.buf[i])) && l.buf[i] != ')' {
+			return -1
+		} else if l.buf[i] == ')' {
+			end = i
+			break
+		}
 	}
 
-	if l.token != nil {
-		l.start += len(l.token) - len(token)
+	index := bytes.LastIndexByte(l.buf[l.start:], '(')
+	if index == -1 {
+		return -1
 	}
 
-	l.token = token
+	marker, err := strconv.Atoi(string(l.buf[index+1 : end]))
+	if marker < 0 && err == nil {
+		//TODO: report error.
+		return -1
+	} else if err != nil {
+		return -1
+	}
+
+	return marker
+}
+
+func (l *Lexer) advance() byte {
+	if l.end >= len(l.buf)-1 {
+		return '\x00'
+	}
+
+	l.end++
+	return l.buf[l.end-1]
+}
+
+func (l *Lexer) peek() byte {
+	if l.atEnd() {
+		return '\x00'
+	}
+
+	return l.buf[l.end]
+}
+
+func (l *Lexer) atEnd() bool {
+	if l.end >= len(l.buf) {
+		return true
+	}
+
+	return false
+}
+
+func (l *Lexer) match(s byte) bool {
+	if l.peek() != s {
+		return false
+	}
+
+	l.advance()
+	return true
 }
 
 func (l *Lexer) script() Element {
@@ -137,15 +193,6 @@ func (l *Lexer) script() Element {
 }
 
 func (l *Lexer) text() Element {
-    clean := bytes.TrimLeft(l.token, whitespace)
-    l.setToken(clean)
-    if len(clean) == 0 {
-        return nil
-    }
-
-    return &Text{
-        buf: bytes.NewBuffer(bytes.TrimSpace(l.token[:l.end])), 
-    }
 }
 
 func (l *Lexer) list() Element {
@@ -166,60 +213,4 @@ func (l *Lexer) chain() Element {
 
 func (l *Lexer) cchain() Element {
 	return nil
-}
-
-func indexFirst(buf []byte, delims ...[]byte) int {
-	index := bytes.IndexByte(buf, '\n')
-	if index == -1 {
-		index = len(buf)
-	}
-
-	for _, delim := range delims {
-		var offset int
-		if hasPrefixWithSpace(buf, delim) {
-			offset = bytes.Index(buf, delim)
-		}
-
-		if v := bytes.Index(buf[offset:index], delim); v != -1 && v+offset < index {
-			index = v + offset
-		}
-	}
-
-	return index
-}
-
-func (l *Lexer) peek() byte {
-	if l.atEnd() {
-		return '\x00'
-	}
-
-	return l.buf[l.end]
-}
-
-func (l *Lexer) atEnd() bool {
-	if l.end >= len(l.buf) {
-		l.err = io.EOF
-		return true
-	}
-
-	return false
-}
-
-var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
-
-func leadingTab(s []byte) int {
-	var count int
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c != '\t' {
-			return count
-		}
-		count++
-	}
-
-	return count
-}
-
-func hasPrefixWithSpace(s []byte, prefix []byte) bool {
-	return bytes.HasPrefix(bytes.TrimLeft(s, " \t\v"), prefix)
 }
