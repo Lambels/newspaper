@@ -2,12 +2,9 @@ package interpreter
 
 import (
 	"bytes"
-	"io"
 	"strconv"
 	"unicode"
 )
-
-const whitespace string = " \t\v"
 
 var token_funcs = []struct {
 	prefix []byte
@@ -20,6 +17,14 @@ var token_funcs = []struct {
 	{[]byte("->[x]"), (*Lexer).cchain},
 }
 
+type Token struct {
+	Marker  int
+	Element Element
+	Line    int
+	Start   int
+	End     int
+}
+
 func NewLexer(buf []byte) *Lexer {
 	return &Lexer{
 		start: 0,
@@ -27,14 +32,6 @@ func NewLexer(buf []byte) *Lexer {
 		line:  0,
 		buf:   buf,
 	}
-}
-
-type Token struct {
-	Marker  int
-	Element Element
-	Line    int
-	Start   int
-	End     int
 }
 
 type Lexer struct {
@@ -45,6 +42,8 @@ type Lexer struct {
 	// line represents the current line.
 	line   int
 	indent int
+
+	parsedScript bool
 
 	tkn *Token
 
@@ -78,28 +77,45 @@ func (l *Lexer) Advance() bool {
 
 	var lexeme Element
 	marker := -1
-	c := l.advance()
 
-	switch {
-	case c == '~': // script tag, emit script lexeme.
-		lexeme = l.script()
-	case c == '\n': // new line, reset indent counter and increment line.
-		l.indent = 0
-		l.line++
-		// for each consecutive match of a tab increase the indent and consume it.
-		for l.match('\t') {
-			l.indent++
-		}
-	case unicode.IsSpace(rune(c)): // skip out of order space.
-	default: // we need to generate a more complex lexeme.
-		gen := (*Lexer).text
-		for _, v := range token_funcs {
-			if bytes.HasPrefix(l.buf[l.start:], v.prefix) {
-				gen = v.gen
+Outer:
+	for {
+		c := l.advance()
+
+		switch {
+		case c == '~': // script tag, emit script lexeme.
+			l.parsedScript = true
+			lexeme = l.script()
+			break Outer
+		case c == '\n': // new line, reset indent counter and increment line.
+			l.indent = 0
+			l.line++
+			l.parsedScript = false
+			// for each consecutive match of a tab increase the indent and consume it.
+			for l.match('\t') {
+				l.indent++
+				l.end++
 			}
+		case unicode.IsSpace(rune(c)): // skip out of order space.
+			for unicode.IsSpace(rune(l.peek())) && !l.atEnd() {
+				if l.peek() == '\n' {
+					l.tkn = nil
+					l.start = l.end
+					return true
+				}
+				l.advance()
+			}
+		default: // we need to generate a more complex lexeme.
+			gen := (*Lexer).text
+			for _, v := range token_funcs {
+				if bytes.HasPrefix(l.buf[l.end-1:], v.prefix) {
+					gen = v.gen
+				}
+			}
+			lexeme = gen(l)
+			marker = l.parseMarker()
+			break Outer
 		}
-		lexeme = gen(l)
-		marker = l.parseMarker()
 	}
 
 	// if parsing the current lexeme had an error, report an illegal advance.
@@ -114,16 +130,37 @@ func (l *Lexer) Advance() bool {
 		Start:   l.start,
 		End:     l.end,
 	}
+	l.start = l.end
 
 	return true
 }
 
 func (l *Lexer) Token() *Token {
-    return l.tkn
+	return l.tkn
 }
 
-func indexBeforeClosing(delims ...[]byte) int {
+func indexBeforeClosing(buf []byte, delims ...[]byte) int {
+	// everything is ended by either a newline or a script tag.
+	var upperBound int
+	if i := bytes.IndexByte(buf, '\n'); i != -1 {
+		upperBound = i
+	} else {
+		upperBound = len(buf) - 1
+	}
 
+	// check if there is a script tag before the newline.
+	if i := bytes.IndexByte(buf[:upperBound], '~'); i != -1 && i < upperBound {
+		upperBound = i
+	}
+
+	// now check for the delims.
+	for _, delim := range delims {
+		if i := bytes.Index(buf[:upperBound], delim); i != -1 && i < upperBound {
+			upperBound = i
+		}
+	}
+
+	return upperBound
 }
 
 func (l *Lexer) parseMarker() int {
@@ -138,14 +175,16 @@ func (l *Lexer) parseMarker() int {
 		}
 	}
 
-	index := bytes.LastIndexByte(l.buf[l.start:], '(')
+	index := bytes.LastIndexByte(l.buf[l.start:l.end], '(')
 	if index == -1 {
 		return -1
+	} else {
+		index += l.start
 	}
 
 	marker, err := strconv.Atoi(string(l.buf[index+1 : end]))
 	if marker < 0 && err == nil {
-		//TODO: report error.
+		l.reporter.AddWarning(nil)
 		return -1
 	} else if err != nil {
 		return -1
@@ -189,10 +228,50 @@ func (l *Lexer) match(s byte) bool {
 }
 
 func (l *Lexer) script() Element {
-	return nil
+	// illegal to parse 2 scripts one after another.
+	if l.parsedScript {
+		l.reporter.AddError(nil)
+		return nil
+	}
+
+	for l.peek() != '~' && !l.atEnd() {
+		if l.peek() == '\n' {
+			l.reporter.AddError(nil)
+			return nil
+		}
+		l.advance()
+	}
+
+	if l.atEnd() {
+		l.reporter.AddError(nil)
+		return nil
+	}
+
+	// consume closing "~"
+	l.advance()
+
+	script, err := parseScript(l.buf[l.start:l.end])
+	if err != nil {
+		l.reporter.AddError(err)
+		return nil
+	}
+
+	return script
 }
 
 func (l *Lexer) text() Element {
+	// illegal to parse text after script on the same line.
+	if l.parsedScript {
+		l.reporter.AddError(nil)
+		return nil
+	}
+
+	l.end += indexBeforeClosing(l.buf[l.end:])
+
+	buf := bytes.NewBuffer(l.buf[l.start : l.end+1])
+	return &Text{
+		buf: buf,
+	}
 }
 
 func (l *Lexer) list() Element {
