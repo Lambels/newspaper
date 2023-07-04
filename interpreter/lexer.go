@@ -6,6 +6,7 @@ import (
 	"unicode"
 )
 
+// token_func maps each of the tokens prefix to their respective generator function.
 var token_funcs = []struct {
 	prefix []byte
 	gen    func(*Lexer) Element
@@ -17,6 +18,7 @@ var token_funcs = []struct {
 	{[]byte("->[x]"), (*Lexer).cchain},
 }
 
+// A token represents a literal wrapped by the type Element with aditional information such as the location and marker.
 type Token struct {
 	Marker  int
 	Element Element
@@ -25,12 +27,14 @@ type Token struct {
 	End     int
 }
 
-func NewLexer(buf []byte) *Lexer {
+// NewLexer creates a new lexer which scans over buf for tokens.
+func NewLexer(buf []byte, reporter *ErrorReporter) *Lexer {
 	return &Lexer{
-		start: 0,
-		end:   0,
-		line:  0,
-		buf:   buf,
+		start:    0,
+		end:      0,
+		line:     0,
+		buf:      buf,
+		reporter: reporter,
 	}
 }
 
@@ -43,33 +47,27 @@ type Lexer struct {
 	line   int
 	indent int
 
+	// parsedScript is a flag which signals wether the last element parsed was a script to prevent illegal advances.
 	parsedScript bool
 
+	// token represents the last token parsed.
 	tkn *Token
 
 	reporter *ErrorReporter
 	buf      []byte
 }
 
-// Possible Tokens:
-// Text:
-// This is example of text. (4)
-// This is also example of text, it is terminated by \n.
+// Advance advances the next token in buf. It also reports wether the advance was legal and similarlly reports any errors
+// to the provided error reporter.
 //
-// Todo:
-// - [] This is an example of a todo.
-// - [] Same here. (3)
-//
-// List:
-// - This is an example of a list. (3)
-// - Same here.
-//
-// Chain:
-// ->[] This is the first element (2) ->[] This is the second element ->[] This is the third element.
-//
-// Script:
-// ~This is a script~
-// ~THis is not a script~ because it is contained in text ~this is a script~
+// The possible tokens are:
+// Script: ~SCRIPT~
+// Text: Some text
+// List: - Some list
+// Todo: - [] Some todo
+// Completed Todo: - [x] Some completed todo
+// Chain: ->[] Some chain
+// Completed chain: ->[x] Some completed chain
 func (l *Lexer) Advance() bool {
 	if l.atEnd() {
 		return false
@@ -83,27 +81,36 @@ Outer:
 		c := l.advance()
 
 		switch {
+		case c == '\x00':
+			return false
 		case c == '~': // script tag, emit script lexeme.
 			l.parsedScript = true
 			lexeme = l.script()
 			break Outer
 		case c == '\n': // new line, reset indent counter and increment line.
 			l.indent = 0
+			l.start++
 			l.line++
 			l.parsedScript = false
 			// for each consecutive match of a tab increase the indent and consume it.
 			for l.match('\t') {
 				l.indent++
-				l.end++
 			}
-		case unicode.IsSpace(rune(c)): // skip out of order space.
-			for unicode.IsSpace(rune(l.peek())) && !l.atEnd() {
+
+			for once := true; once || l.matchSpace(); once = false {
 				if l.peek() == '\n' {
 					l.tkn = nil
 					l.start = l.end
 					return true
 				}
-				l.advance()
+			}
+		case unicode.IsSpace(rune(c)): // skip out of order space.
+			for once := true; once || l.matchSpace(); once = false {
+				if l.peek() == '\n' {
+					l.tkn = nil
+					l.start = l.end
+					return true
+				}
 			}
 		default: // we need to generate a more complex lexeme.
 			gen := (*Lexer).text
@@ -135,10 +142,14 @@ Outer:
 	return true
 }
 
+// Token returns the previously parsed token.
+//
+// Token also reports the last parsed token even after multiple illegal advancements.
 func (l *Lexer) Token() *Token {
 	return l.tkn
 }
 
+// TODO: figure this out.
 func indexBeforeClosing(buf []byte, delims ...[]byte) int {
 	// everything is ended by either a newline or a script tag.
 	var upperBound int
@@ -193,8 +204,12 @@ func (l *Lexer) parseMarker() int {
 	return marker
 }
 
+// advance advances the end pointer and reports the byte before advancing, this is to allow
+// first iteration advancing.
+//
+// it returns a null terminator byte if currently at end.
 func (l *Lexer) advance() byte {
-	if l.end >= len(l.buf)-1 {
+	if l.atEnd() {
 		return '\x00'
 	}
 
@@ -202,6 +217,9 @@ func (l *Lexer) advance() byte {
 	return l.buf[l.end-1]
 }
 
+// peek reports the current byte under the end pointer.
+//
+// it returns a null terminator byte if currently at end.
 func (l *Lexer) peek() byte {
 	if l.atEnd() {
 		return '\x00'
@@ -218,6 +236,7 @@ func (l *Lexer) atEnd() bool {
 	return false
 }
 
+// match conditionally consumes s if the current character matches it and reports the advancment.
 func (l *Lexer) match(s byte) bool {
 	if l.peek() != s {
 		return false
@@ -227,6 +246,24 @@ func (l *Lexer) match(s byte) bool {
 	return true
 }
 
+// matchSpace conditionally consumes a space character (ignoring \n) and reports the advancement.
+func (l *Lexer) matchSpace() bool {
+	c := l.peek()
+	if c == ' ' || c == '\r' {
+		l.advance()
+		return true
+	}
+
+	return false
+}
+
+// script parses a script starting from the first character of the script.
+//
+// It also consumes the closing script tag and reports:
+//
+// - Any errors while parsing the script.
+//
+// - Any unterminated scripts.
 func (l *Lexer) script() Element {
 	// illegal to parse 2 scripts one after another.
 	if l.parsedScript {
