@@ -12,9 +12,9 @@
         - [] `np view date`
         - [] `np view today`
     - [] `np pt` ^ (* - subcommands, ^ - pipelinable) 
-        - [] `np pt add -t title -d data -s script` *
+        - [] `np pt add -t title -d data -s script -a annotation` *
         - [] `np pt del -h hash` *
-        - [] `np pt mod-script -h hash -s script` *
+        - [] `np pt mod -h hash -t title -d data -s script -a annotation` *
         - [] `np pt -i index` ^
         - [] `np pt date` ^
         - [] `np pt today` ^
@@ -130,3 +130,12 @@
 ```
 
 # Language Syntax (3)
+```
+if
+eif
+!
+$tag
+^
+```
+- `^` marks the element as unmodifiable
+- `$` marks the element as important
