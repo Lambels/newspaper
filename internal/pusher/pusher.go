@@ -1,11 +1,18 @@
 package pusher
 
-import "encoding"
+import (
+	"encoding"
+)
+
+const (
+	PushInCode byte = iota
+	PushCode
+	PushNCode
+	EveryCode
+)
 
 type Pusher interface {
-	// Advance represents 
 	Advance() error
 	AdvanceN(int) (int, error)
 	encoding.BinaryMarshaler
-	encoding.BinaryAppender
 }
