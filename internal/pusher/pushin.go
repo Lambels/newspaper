@@ -18,26 +18,29 @@ func NewPushIn(n int) (PushIn, error) {
 }
 
 func (p *PushIn) Advance() error {
-	if p.n == 1 {
+	p.n -= 1
+
+	if p.n < 1 {
 		return ErrFinished
 	}
 
-	p.n -= 1
 	return nil
 }
 
 func (p *PushIn) AdvanceN(n int) (int, error) {
-	if n >= p.n {
-		p.n = 1
-		return p.n, ErrFinished
+	p.n -= n
+	if p.n < 1 {
+		// return p.n value if overflowed, this value makes
+		// sense up to first ErrFinished returned afterwards
+		// the value no longer makes sense.
+		return p.n + n, ErrFinished
 	}
 
-	p.n -= n
 	return n, nil
 }
 
 func (p PushIn) MarshalBinary() ([]byte, error) {
-	if p.n == 1 {
+	if p.n < 1 {
 		return nil, ErrFinished	
 	}
 
