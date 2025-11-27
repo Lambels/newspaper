@@ -14,5 +14,5 @@ const (
 type Pusher interface {
 	Advance() error
 	AdvanceN(int) (int, error)
-	encoding.BinaryMarshaler
+	encoding.BinaryAppender
 }

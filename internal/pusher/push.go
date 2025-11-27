@@ -18,9 +18,10 @@ func (p *Push) AdvanceN(_ int) (int, error) {
 	return 1, ErrFinished
 }
 
-func (p Push) MarshalBinary() ([]byte, error) {
+func (p Push) ApppendBinary(buf []byte) ([]byte, error) {
 	if !p.called {
-		return []byte{PushCode}, nil
+		buf = append(buf, PushCode)
+		return buf, nil
 	}
 
 	return nil, ErrFinished

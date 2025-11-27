@@ -43,26 +43,15 @@ func (c *Chain) AdvanceN(n int) (int, error) {
 	return n, err
 }
 
-// join is used to join multiple pushers to chain format. This is usually how internal state is represented for each pusher
-//
-// reps1 -> reps2 --> ... -> repsn
-func join(reps ...Pusher) []byte {
-	return ""
-}
+func (p Chain) AppendBinary(buf []byte) ([]byte, error) {
+	var err error
+	for _, push := range p {
+		buf, err = push.AppendBinary(buf)
+		if err != nil && !errors.Is(ErrFinished, err) {
+			// error not related to pusher state, cannot marshal chain.
+			return nil, err
+		}
+	}
 
-// joinRec is used to join recursive definitions without producing an infinite byte array (that would require allot of memory!)
-// 
-// to use joinRec put your recursive identifier as the first argument and the current state under reps variadic arguments.
-// the following will be produced:
-// 	- if reps in empty/produces empty string: rec
-// 	- else: reps1 -> reps2 -> reps3 -> ... -> rec ( -> reps1 -> reps2 -> ... -> rec -> ...)
-// the part in () isnt actually represented but is implied by the rec.
-func joinRec(rec string, reps ...Pusher) []byte {
-	// makes use of join
-	return ""
+	return buf, nil
 }
-
-// join joins the string representation of multiple pushers into a chain representation.
-//func join(reps ...string) string {
-//	return ""
-//}
