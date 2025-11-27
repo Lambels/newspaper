@@ -33,3 +33,5 @@ type Pusher interface {
 	AdvanceN(int) (int, error)
 	encoding.BinaryAppender
 }
+
+type factory func() Pusher
