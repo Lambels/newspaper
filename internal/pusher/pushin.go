@@ -9,12 +9,12 @@ type PushIn struct {
 	n int
 }
 
-func NewPushIn(n int) (PushIn, error) {
+func NewPushIn(n int) (*PushIn, error) {
 	if n <= 0 {
-		return PushIn{}, errors.New("Invalid value for n, n has to be > 0")
+		return nil, errors.New("Invalid value for n, n has to be > 0")
 	}
 
-	return PushIn{n}, nil
+	return &PushIn{n}, nil
 }
 
 func (p *PushIn) Advance() error {

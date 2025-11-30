@@ -4,8 +4,8 @@ type Push struct {
 	called bool
 }
 
-func NewPush() Push {
-	return Push{}
+func NewPush() *Push {
+	return &Push{}
 }
 
 func (p *Push) Advance() error {

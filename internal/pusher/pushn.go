@@ -7,8 +7,8 @@ type PushN struct {
 	n int
 }
 
-func NewPushN(n int) PushN {
-	return PushN{n}
+func NewPushN(n int) *PushN {
+	return &PushN{n}
 }
 
 func (p *PushN) Advance() error {
