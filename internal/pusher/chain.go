@@ -43,6 +43,7 @@ func (c *Chain) AdvanceN(n int) (int, error) {
 	return n, err
 }
 
+// No need for a start sequence since eveything is implicitly a chain under the hood.
 func (p Chain) AppendBinary(buf []byte) ([]byte, error) {
 	var err error
 	for _, push := range p {
