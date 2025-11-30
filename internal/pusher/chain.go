@@ -54,5 +54,50 @@ func (p Chain) AppendBinary(buf []byte) ([]byte, error) {
 		}
 	}
 
+	buf = append(buf, EndSeqCode)
 	return buf, nil
+}
+
+// Add end sequence and add start sequence also.
+// Eagerly execute all pushers.
+// return err finished if no pushers left.
+// return err pushed if all pushed.
+type AndChain []Pusher
+
+func (c *AndChain) Advance() error {
+	if len(*c) == 0 {
+		return ErrFinished
+	}
+
+	var shifted int
+	rerr := ErrPushed
+	for i, pusher := range *c {
+		err := pusher.Advance()
+		if !errors.Is(err, ErrPushed) {
+			rerr = nil
+		}
+
+		if errors.Is(err, ErrFinished) {
+			removeAndReslice((*[]Pusher)(c), i-shifted)
+			if len(*c) == 0 {
+				return ErrFinished
+			}
+		}
+	}
+
+	return rerr
+}
+
+// TODO: implement somehow, choose good representation
+func (c *AndChain) AdvanceN(n int) (int, error) {
+	if len(*c) == 0 {
+		return 0, ErrFinished
+	}
+
+}
+
+type OrChain []Pusher
+
+func removeAndReslice(ps *[]Pusher, i int) {
+	
 }
